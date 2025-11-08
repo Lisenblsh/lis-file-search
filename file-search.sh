@@ -13,7 +13,12 @@ for dir in "${EXCLUDE_DIRS[@]}"; do
   RG_EXCLUDES+=(--glob "!$dir")
 done
 
-# Функция для превью файлов
+if [ -n "$BAT_THEME"]; then
+  BAT_THEME="Nord"
+fi
+
+export BAT_THEME
+
 preview_file() {
   local file="$1"
   local mime_type=$(file --mime-type -b "$file" 2>/dev/null)
@@ -24,46 +29,41 @@ preview_file() {
     echo -e "\033[1;33m📊 MIME type:\033[0m $mime_type"
     echo -e "\033[1;33m📊 Size:\033[0m $(identify -format '%wx%h' "$file" 2>/dev/null || echo 'unknown')"
     echo
-
     kitty icat --clear --transfer-mode=memory --stdin=no --place="${FZF_PREVIEW_COLUMNS}x$((FZF_PREVIEW_LINES - 6))@0x0" "$file"
     ;;
   video/*)
-
-    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE"
+    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE" #show empty image for clear image from "image/*"
     echo -e "\033[1;35m🎥 Video file:\033[0m $file"
     echo -e "\033[1;33m📊 MIME type:\033[0m $mime_type"
     echo -e "\033[1;33m💾 Size:\033[0m $(stat -c%s "$file" 2>/dev/null | numfmt --to=iec || echo 'unknown')"
     ;;
   audio/*)
-    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE"
+    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE" #show empty image for clear image from "image/*"
     echo -e "\033[1;34m🎵 Audio file:\033[0m $file"
     echo -e "\033[1;33m📊 MIME type:\033[0m $mime_type"
     echo -e "\033[1;33m💾 Size:\033[0m $(stat -c%s "$file" 2>/dev/null | numfmt --to=iec || echo 'unknown')"
     ;;
   application/pdf)
-    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE"
+    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE" #show empty image for clear image from "image/*"
     echo -e "\033[1;31m📕 PDF doc:\033[0m $file"
     echo -e "\033[1;33m📊 MIME type:\033[0m $mime_type"
     echo -e "\033[1;33m💾 Size:\033[0m $(stat -c%s "$file" 2>/dev/null | numfmt --to=iec || echo 'unknown')"
-
     ;;
   text/* | application/json | application/xml | application/javascript | application/x-sh | application/x-shellscript)
-    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE"
-    bat --color=always --style=numbers --line-range=:100 "$file" 2>/dev/null || head -n 100 "$file"
+    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE" #show empty image for clear image from "image/*"
+    bat --color=always --theme="$BAT_THEME" --style=numbers --line-range=:100 "$file" 2>/dev/null || head -n 100 "$file"
     ;;
   *)
-    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE"
+    kitty icat --clear --transfer-mode=memory --stdin=no "$EMPTY_IMAGE" #show empty image for clear image from "image/*"
     echo -e "\033[1;37m📄 File:\033[0m $(basename "$file")"
     echo -e "\033[1;33m📁 Full path:\033[0m $file"
     echo -e "\033[1;33m📊 MIME type:\033[0m $mime_type"
     echo -e "\033[1;33m💾 Size:\033[0m $(stat -c%s "$file" 2>/dev/null | numfmt --to=iec || echo 'unknown')"
-
     ;;
   esac
 }
 
 open_file() {
-
   echo "Open file: $1" >&2
   local file="$1"
   [[ -f "$file" ]] || {
@@ -87,7 +87,7 @@ open_file() {
     zathura "$file" 2>/dev/null &
     ;;
   audio/*)
-    vlc "$file" &
+    vlc "$file" 2>/dev/null &
     ;;
   *)
     echo "$file" | wl-copy -n
@@ -97,9 +97,39 @@ open_file() {
   esac
 }
 
+preview_content_file() {
+  local file="$1"
+  local query="$2"
+  [ -z "$file" ] && return
+  [ ! -f "$file" ] && return
+
+  # get numbers for all matches
+  mapfile -t lines < <(
+    rg -F -n --no-heading --color=never "$query" "$file" 2>/dev/null |
+      cut -d: -f1 | sort -n -u
+  )
+
+  local first_line=1
+  [ ${#lines[@]} -gt 0 ] && first_line=${lines[0]}
+
+  local preview_lines=${FZF_PREVIEW_LINES:-30}
+
+  # compute first line for centering
+  local start_line=$((first_line - preview_lines / 2))
+  [ "$start_line" -lt 1 ] && start_line=1
+
+  # generate args --highlight-line for matches
+  local hl_args=()
+  for l in "${lines[@]}"; do
+    hl_args+=(--highlight-line="$l")
+  done
+
+  bat --color=always --theme="$BAT_THEME" --style=numbers --paging=never --line-range="${start_line}:+${preview_lines}" "${hl_args[@]}" "$file"
+}
 # export func for childe-shell
 export -f open_file
 export -f preview_file
+export -f preview_content_file
 
 SHELL=$(which bash)
 # Меню выбора режима
@@ -115,32 +145,21 @@ case "$choice" in
       --prompt "filter > " \
       --preview-window=right:70% \
       --bind="focus:transform-preview-label:echo [ {} ]" \
-      --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {} ]"
+      --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {} ]" \
+      --header="Type to search (file name)" \
+      --color='prompt:226,header:39'
   ;;
 "🧠 Search by content")
-  query=$(
-    echo "" | fzf --print-query \
-      --prompt "🔍 Enter your search query here: " \
-      --header="╭─ SEARCH BY CONTENT ────────────────────╮
-│ Enter text and press \"Enter\" to search │
-╰────────────────────────────────────────╯" \
-      --border=rounded \
-      --color='prompt:226,header:39'
-  )
-
-  query=$(echo "$query" | head -1)
-  [ -z "$query" ] && exit 0
-
-  rg --hidden --no-ignore --no-heading --line-number --color=always "${RG_EXCLUDES[@]}" "$query" "$SEARCH_DIR" 2>/dev/null |
-    fzf --ansi \
-      --delimiter : \
-      --nth 3.. \
-      --preview 'bat --color=always --highlight-line {2} {1}' \
-      --bind "enter:execute:open_file {1}" \
-      --prompt "filter > " \
-      --preview-window=right:70% \
-      --bind="focus:transform-preview-label:echo [ {1} ]" \
-      --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {1} ]" \
-      --bind 'ctrl-c:abort'
+  fzf --ansi --phony \
+    --prompt "search > " \
+    --bind "change:reload:sleep 0.5; rg -F --hidden --no-ignore --color=never -l ${RG_EXCLUDES[*]} {q} \"$SEARCH_DIR\" 2>/dev/null" \
+    --preview "preview_content_file {} {q}" \
+    --bind "enter:execute:open_file {}" \
+    --preview-window=right:70% \
+    --bind="focus:transform-preview-label:echo [ {} ]" \
+    --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {} ]" \
+    --bind "ctrl-c:abort" \
+    --header="Type to search (content-based)" \
+    --color='prompt:226,header:39'
   ;;
 esac
