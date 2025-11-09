@@ -173,8 +173,18 @@ while [[ 1 ]]; do
   "🧠 Search by content")
     fzf --ansi --phony \
       --bind "start:reload-sync:echo" \
-      --bind "change:reload:sleep 0.5; [[ {q} != '' ]] && rg -F --hidden --no-ignore --color=never -l ${RG_EXCLUDES[*]} {q} \"$SEARCH_DIR\" 2>/dev/null || true" \
-      --preview "preview_content_file {} {q}" \
+      --bind "change:reload:sleep 0.5; \
+            [[ {q} != '' ]] && \
+            rg -F --hidden --no-ignore --color=never \
+               --count-matches \
+               --with-filename \
+               ${RG_EXCLUDES[*]} \
+               {q} \"$SEARCH_DIR\" 2>/dev/null | \
+            sed 's/:/\t(/' | sed 's/$/ matches)/' \
+            || true" \
+      --delimiter='\t' \
+      --with-nth='1' \
+      --preview "preview_content_file {1} {q}" \
       --input-label=" Type to search (content-based) " \
       "${BASE_OPTIONS_FZF[@]}"
     ;;
