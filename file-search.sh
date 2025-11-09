@@ -1,10 +1,31 @@
 #!/usr/bin/env bash
+
+trap 'echo -e "\nВыход по Ctrl+C"; exit' SIGINT
+
 SEARCH_DIR="$HOME"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EMPTY_IMAGE="$SCRIPT_DIR/empty.png"
 
 EXCLUDE_DIRS=(".git" "node_modules" ".cache" "/proc" "/run" "/tmp" "/var/cache")
+
+BASE_OPTIONS_FZF=(
+  --bind "enter:execute:open_file {}"
+  --preview-window=right:70%
+  --bind="focus:transform-preview-label:echo [ {} ]"
+  --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {} ]"
+  --color='input-border:226,input-label:226'
+  --list-border
+  --bind 'result:transform-list-label:
+        if [[ -z $FZF_QUERY ]]; then
+          echo " $FZF_MATCH_COUNT items "
+        else
+          echo " $FZF_MATCH_COUNT matches for \"$FZF_QUERY\" "
+        fi
+        '
+  --border --border-label="C-c | Esc - exit || C-p - toggle preview"
+  --input-border --info=right
+)
 
 FD_EXCLUDES=()
 RG_EXCLUDES=()
@@ -75,7 +96,7 @@ open_file() {
 
   case "$mime" in
   text/*)
-    kitty --class editterm --config /dev/null -e bash -lc "nvim '$file'" 2>/dev/null &
+    kitty --config /dev/null -e bash -lc "nvim '$file'" 2>/dev/null &
     ;;
   image/*)
     imv "$file" 2>/dev/null &
@@ -123,8 +144,8 @@ preview_content_file() {
   for l in "${lines[@]}"; do
     hl_args+=(--highlight-line="$l")
   done
-
-  bat --color=always --theme="$BAT_THEME" --style=numbers --paging=never --line-range="${start_line}:+${preview_lines}" "${hl_args[@]}" "$file"
+  #echo "───── ${#lines[@]}  matches ─────"
+  bat --color=always --theme="$BAT_THEME" --style=numbers --paging=never "${hl_args[@]}" "$file"
 }
 # export func for childe-shell
 export -f open_file
@@ -132,34 +153,34 @@ export -f preview_file
 export -f preview_content_file
 
 SHELL=$(which bash)
-# Меню выбора режима
-choice=$(printf "🔍 Search by file name\n🧠 Search by content" |
-  fzf --prompt="Select mode > ")
 
-case "$choice" in
-"🔍 Search by file name")
-  fd "" "$SEARCH_DIR" --type f --hidden --no-ignore "${FD_EXCLUDES[@]}" 2>/dev/null |
-    fzf --ansi --height=100% \
-      --preview 'preview_file {}' \
-      --bind "enter:execute:open_file {}" \
-      --prompt "filter > " \
-      --preview-window=right:70% \
-      --bind="focus:transform-preview-label:echo [ {} ]" \
-      --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {} ]" \
-      --header="Type to search (file name)" \
-      --color='prompt:226,header:39'
-  ;;
-"🧠 Search by content")
-  fzf --ansi --phony \
-    --prompt "search > " \
-    --bind "change:reload:sleep 0.5; rg -F --hidden --no-ignore --color=never -l ${RG_EXCLUDES[*]} {q} \"$SEARCH_DIR\" 2>/dev/null" \
-    --preview "preview_content_file {} {q}" \
-    --bind "enter:execute:open_file {}" \
-    --preview-window=right:70% \
-    --bind="focus:transform-preview-label:echo [ {} ]" \
-    --bind="ctrl-p:toggle-preview+transform-preview-label:echo [ {} ]" \
-    --bind "ctrl-c:abort" \
-    --header="Type to search (content-based)" \
-    --color='prompt:226,header:39'
-  ;;
-esac
+while [[ 1 ]]; do
+
+  # Меню выбора режима
+  choice=$(printf "🔍 Search by file name\n🧠 Search by content\n❌ Exit" |
+    fzf --phony \
+      --border \
+      --border-label="C-c|Esc - exit || C-p - toggle preview")
+
+  case "$choice" in
+  "🔍 Search by file name")
+    fd "" "$SEARCH_DIR" --type f --hidden --no-ignore "${FD_EXCLUDES[@]}" 2>/dev/null |
+      fzf --ansi --height=100% \
+        --preview 'preview_file {}' \
+        --input-label=" Type to search (filename-based) " \
+        "${BASE_OPTIONS_FZF[@]}"
+    ;;
+  "🧠 Search by content")
+    fzf --ansi --phony \
+      --bind "start:reload-sync:echo" \
+      --bind "change:reload:sleep 0.5; [[ {q} != '' ]] && rg -F --hidden --no-ignore --color=never -l ${RG_EXCLUDES[*]} {q} \"$SEARCH_DIR\" 2>/dev/null || true" \
+      --preview "preview_content_file {} {q}" \
+      --input-label=" Type to search (content-based) " \
+      "${BASE_OPTIONS_FZF[@]}"
+    ;;
+  "❌ Exit" | "")
+    break
+    ;;
+  esac
+
+done
